@@ -1,0 +1,519 @@
+* {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* ヘッダー */
+        .header {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            color: #667eea;
+            margin-bottom: 5px;
+            font-size: 28px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 14px;
+        }
+
+        /* レイアウト */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 1200px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* パネル共通スタイル */
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        .panel h2 {
+            color: #667eea;
+            font-size: 18px;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 10px;
+        }
+
+        /* コントロールパネル */
+        .control-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .control-group label {
+            font-weight: 600;
+            font-size: 13px;
+            color: #667eea;
+            margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .control-group input,
+        .control-group select {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            transition: border-color 0.2s;
+        }
+
+        .control-group input:focus,
+        .control-group select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        /* メトリクス表示 */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .metric-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .metric-box .label {
+            font-size: 12px;
+            opacity: 0.9;
+            margin-bottom: 5px;
+        }
+
+        .metric-box .value {
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .metric-box .unit {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+
+        .metric-box.warning {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .metric-box.success {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+
+        /* ボタングループ */
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button.primary {
+            background: #667eea;
+            color: white;
+        }
+
+        button.primary:hover {
+            background: #5568d3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        button.secondary {
+            background: #f0f0f0;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+
+        button.secondary:hover {
+            background: #e0e0e0;
+        }
+
+        button.danger {
+            background: #f5576c;
+            color: white;
+        }
+
+        button.danger:hover {
+            background: #e0455b;
+        }
+
+        button.success {
+            background: #4facfe;
+            color: white;
+        }
+
+        button.success:hover {
+            background: #2e9dd9;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* グラフ */
+        .chart-container {
+            background: #f9f9f9;
+            border-radius: 6px;
+            padding: 10px;
+            height: 250px;
+            position: relative;
+        }
+
+        canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* ステータスログ */
+        .status-log {
+            background: #f9f9f9;
+            border-radius: 6px;
+            padding: 10px;
+            height: 150px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+        }
+
+        .log-entry {
+            padding: 5px;
+            margin: 2px 0;
+            border-left: 3px solid #667eea;
+            padding-left: 8px;
+            color: #333;
+        }
+
+        .log-entry.info {
+            border-left-color: #4facfe;
+        }
+
+        .log-entry.warning {
+            border-left-color: #f5aa00;
+            color: #f5aa00;
+        }
+
+        .log-entry.error {
+            border-left-color: #f5576c;
+            color: #f5576c;
+        }
+
+        .log-entry.success {
+            border-left-color: #00d084;
+            color: #00d084;
+        }
+
+        /* タイムラインビュー */
+        .timeline {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 8px;
+            margin-top: 15px;
+            height: 100px;
+        }
+
+        .timeline-bar {
+            flex: 1;
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px 4px 0 0;
+            transition: all 0.3s;
+            position: relative;
+            min-height: 5px;
+        }
+
+        .timeline-bar:hover {
+            opacity: 0.8;
+        }
+
+        .timeline-bar-label {
+            position: absolute;
+            bottom: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            color: #666;
+            white-space: nowrap;
+        }
+
+        /* コード表示 */
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+
+        .code-block .keyword {
+            color: #f92672;
+        }
+
+        .code-block .string {
+            color: #e6db74;
+        }
+
+        .code-block .number {
+            color: #ae81ff;
+        }
+
+        .code-block .comment {
+            color: #75715e;
+        }
+
+        /* タブ */
+        .tab-container {
+            display: flex;
+            gap: 0;
+            border-bottom: 2px solid #f0f0f0;
+            margin-bottom: 15px;
+        }
+
+        .tab-button {
+            padding: 10px 15px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 14px;
+            color: #999;
+            transition: all 0.2s;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+        }
+
+        .tab-button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-button:hover {
+            color: #667eea;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* アラート */
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            display: flex;
+            gap: 10px;
+            align-items: flex-start;
+        }
+
+        .alert.info {
+            background: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            color: #1976d2;
+        }
+
+        .alert.warning {
+            background: #fff3e0;
+            border-left: 4px solid #ff9800;
+            color: #f57c00;
+        }
+
+        .alert.error {
+            background: #ffebee;
+            border-left: 4px solid #f44336;
+            color: #c62828;
+        }
+
+        .alert.success {
+            background: #e8f5e9;
+            border-left: 4px solid #4caf50;
+            color: #2e7d32;
+        }
+
+        .alert-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+
+        /* モーダル */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            font-size: 20px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 20px;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+        }
+
+        /* 統計パネル */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .stat-card {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid #eee;
+            text-align: center;
+        }
+
+        .stat-card .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .stat-label {
+            font-size: 12px;
+            color: #999;
+        }
+
+        /* スケーリングインジケータ */
+        .scaling-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+        }
+
+        .scaling-indicator .bar {
+            flex: 1;
+            height: 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .scaling-indicator .fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+
+        .scaling-indicator .label {
+            font-size: 12px;
+            color: #999;
+            min-width: 60px;
+        }
+
+        /* レスポンシブ */
+        @media (max-width: 768px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .control-panel {
+                grid-template-columns: 1fr;
+            }
+
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 20px;
+            }
+        }
