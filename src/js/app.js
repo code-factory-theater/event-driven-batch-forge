@@ -1,789 +1,532 @@
-// =====================================
-        // グローバル状態
-        // =====================================
-        let simulationState = {
-            sqsBacklog: 0,
+// Application State
+        const appState = {
+            queueDepth: 0,
             runningTasks: 0,
-            totalProcessed: 0,
-            totalScaled: 0,
-            lastScaleTime: { out: 0, in: 0 },
-            isRunning: false,
-            simulationStart: Date.now(),
-            metricsHistory: [],
-            alerts: [],
-            latencies: []
+            backlogHistory: [],
+            events: [],
+            config: {
+                minCapacity: 0,
+                maxCapacity: 10,
+                scaleOutCooldown: 60,
+                scaleInCooldown: 300,
+                targetBacklog: 100,
+                scaleOutThreshold: 150,
+                scaleInThreshold: 30
+            },
+            settings: {
+                awsRegion: 'ap-northeast-1',
+                sqsQueueName: 'batch-processing-queue',
+                ecsClusterName: 'fargate-batch-cluster',
+                ecsServiceName: 'batch-processor-service',
+                refreshInterval: 10,
+                enableNotifications: true
+            },
+            lastScaleAction: null,
+            lastScaleTime: 0
         };
 
-        const MAX_HISTORY = 30;
+        // Initialize
+        function init() {
+            loadConfiguration();
+            loadSettings();
+            initializeChart();
+            generateMockData();
+            updateAllMetrics();
+            
+            // Auto-refresh
+            setInterval(() => {
+                generateMockData();
+                updateAllMetrics();
+            }, appState.settings.refreshInterval * 1000);
+        }
 
-        // =====================================
-        // ユーティリティ関数
-        // =====================================
-        function getConfig() {
-            return {
-                targetBacklog: parseInt(document.getElementById('targetBacklog').value),
-                minTasks: parseInt(document.getElementById('minTasks').value),
-                maxTasks: parseInt(document.getElementById('maxTasks').value),
+        // Load configuration from localStorage
+        function loadConfiguration() {
+            const saved = localStorage.getItem('scalingConfig');
+            if (saved) {
+                appState.config = JSON.parse(saved);
+            }
+            updateConfigUI();
+        }
+
+        // Load settings from localStorage
+        function loadSettings() {
+            const saved = localStorage.getItem('scalingSettings');
+            if (saved) {
+                appState.settings = JSON.parse(saved);
+            }
+            updateSettingsUI();
+        }
+
+        // Save configuration
+        function saveConfig() {
+            appState.config = {
+                minCapacity: parseInt(document.getElementById('minCapacity').value),
+                maxCapacity: parseInt(document.getElementById('maxCapacity').value),
                 scaleOutCooldown: parseInt(document.getElementById('scaleOutCooldown').value),
                 scaleInCooldown: parseInt(document.getElementById('scaleInCooldown').value),
-                processingTime: parseFloat(document.getElementById('processingTime').value)
+                targetBacklog: parseInt(document.getElementById('targetBacklog').value),
+                scaleOutThreshold: parseInt(document.getElementById('scaleOutThreshold').value),
+                scaleInThreshold: parseInt(document.getElementById('scaleInThreshold').value)
             };
+            localStorage.setItem('scalingConfig', JSON.stringify(appState.config));
+            updateSummary();
+            showNotification('Configuration saved successfully!', 'success');
         }
 
-        function updateLabels() {
-            document.getElementById('targetLabel').textContent = document.getElementById('targetBacklog').value;
-            document.getElementById('minLabel').textContent = document.getElementById('minTasks').value;
-            document.getElementById('maxLabel').textContent = document.getElementById('maxTasks').value;
-            document.getElementById('scaleOutLabel').textContent = document.getElementById('scaleOutCooldown').value;
-            document.getElementById('scaleInLabel').textContent = document.getElementById('scaleInCooldown').value;
-        }
-
-        function addLog(message, type = 'info') {
-            const logEl = document.getElementById('statusLog');
-            const timestamp = new Date().toLocaleTimeString('ja-JP');
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            entry.textContent = `[${timestamp}] ${message}`;
-            logEl.insertBefore(entry, logEl.firstChild);
-
-            // 最大100行まで保持
-            while (logEl.children.length > 100) {
-                logEl.removeChild(logEl.lastChild);
+        // Reset configuration to defaults
+        function resetConfig() {
+            if (confirm('Reset configuration to defaults?')) {
+                localStorage.removeItem('scalingConfig');
+                appState.config = {
+                    minCapacity: 0,
+                    maxCapacity: 10,
+                    scaleOutCooldown: 60,
+                    scaleInCooldown: 300,
+                    targetBacklog: 100,
+                    scaleOutThreshold: 150,
+                    scaleInThreshold: 30
+                };
+                updateConfigUI();
+                updateSummary();
+                showNotification('Configuration reset to defaults!', 'info');
             }
         }
 
-        function addAlert(message, type = 'info') {
-            const container = document.getElementById('alertContainer');
-            const alert = document.createElement('div');
-            alert.className = `alert ${type}`;
-            alert.innerHTML = `<div class="alert-icon">${getAlertIcon(type)}</div><div>${message}</div>`;
-            container.appendChild(alert);
-
-            // 5秒後に削除
-            setTimeout(() => {
-                if (alert.parentNode) {
-                    alert.parentNode.removeChild(alert);
-                }
-            }, 5000);
+        // Update configuration UI
+        function updateConfigUI() {
+            document.getElementById('minCapacity').value = appState.config.minCapacity;
+            document.getElementById('maxCapacity').value = appState.config.maxCapacity;
+            document.getElementById('scaleOutCooldown').value = appState.config.scaleOutCooldown;
+            document.getElementById('scaleInCooldown').value = appState.config.scaleInCooldown;
+            document.getElementById('targetBacklog').value = appState.config.targetBacklog;
+            document.getElementById('scaleOutThreshold').value = appState.config.scaleOutThreshold;
+            document.getElementById('scaleInThreshold').value = appState.config.scaleInThreshold;
+            document.getElementById('scaleOutDisplay').textContent = appState.config.scaleOutThreshold + '%';
+            document.getElementById('scaleInDisplay').textContent = appState.config.scaleInThreshold + '%';
         }
 
-        function getAlertIcon(type) {
-            const icons = { info: 'ℹ️', warning: '⚠️', error: '❌', success: '✅' };
-            return icons[type] || '📢';
+        // Update settings UI
+        function updateSettingsUI() {
+            document.getElementById('awsRegion').value = appState.settings.awsRegion;
+            document.getElementById('sqsQueueName').value = appState.settings.sqsQueueName;
+            document.getElementById('ecsClusterName').value = appState.settings.ecsClusterName;
+            document.getElementById('ecsServiceName').value = appState.settings.ecsServiceName;
+            document.getElementById('refreshInterval').value = appState.settings.refreshInterval;
+            document.getElementById('enableNotifications').checked = appState.settings.enableNotifications;
         }
 
-        // =====================================
-        // スケーリングロジック
-        // =====================================
-        function calculateDesiredTasks() {
-            const config = getConfig();
-            const backlog = simulationState.sqsBacklog;
-            const current = simulationState.runningTasks;
-
-            // Backlog per Task 計算
-            const backlogPerTask = current > 0 ? Math.ceil(backlog / current) : 0;
-
-            // 必要タスク数
-            let desired = config.targetBacklog > 0
-                ? Math.ceil(backlog / config.targetBacklog)
-                : 0;
-
-            // クラッピング
-            desired = Math.max(config.minTasks, Math.min(desired, config.maxTasks));
-
-            return { desired, backlogPerTask };
+        // Save advanced settings
+        function saveAdvancedSettings() {
+            appState.settings = {
+                awsRegion: document.getElementById('awsRegion').value,
+                sqsQueueName: document.getElementById('sqsQueueName').value,
+                ecsClusterName: document.getElementById('ecsClusterName').value,
+                ecsServiceName: document.getElementById('ecsServiceName').value,
+                refreshInterval: parseInt(document.getElementById('refreshInterval').value),
+                enableNotifications: document.getElementById('enableNotifications').checked
+            };
+            localStorage.setItem('scalingSettings', JSON.stringify(appState.settings));
+            closeSettings();
+            showNotification('Settings saved! Refresh interval updated.', 'success');
         }
 
-        function tryAutoScale() {
-            const config = getConfig();
-            const { desired } = calculateDesiredTasks();
-            const current = simulationState.runningTasks;
+        // Modal handlers
+        function openSettings() {
+            updateSettingsUI();
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').classList.remove('active');
+        }
+
+        // Generate mock data
+        function generateMockData() {
+            // Simulate realistic queue depth and task patterns
+            const time = new Date().getTime();
+            const hour = new Date().getHours();
+            
+            // Business hours have more traffic
+            const trafficMultiplier = (hour >= 9 && hour <= 18) ? 1.5 : 0.3;
+            
+            // Random spike
+            const spike = Math.random() > 0.95 ? Math.random() * 2000 : 0;
+            
+            appState.queueDepth = Math.max(0, Math.floor(
+                (100 + Math.sin(time / 30000) * 300 + Math.random() * 200) * trafficMultiplier + spike
+            ));
+            
+            // Calculate optimal task count based on backlog per task
+            const backlogPerTask = appState.runningTasks === 0 
+                ? appState.queueDepth 
+                : appState.queueDepth / appState.runningTasks;
+            
+            // Apply scaling logic
             const now = Date.now();
-
-            if (desired > current) {
-                // スケールアウト
-                const timeSinceLastOut = (now - simulationState.lastScaleTime.out) / 1000;
-                if (timeSinceLastOut >= config.scaleOutCooldown) {
-                    simulationState.runningTasks = desired;
-                    simulationState.lastScaleTime.out = now;
-                    simulationState.totalScaled++;
-                    addLog(`⬆️ スケールアウト: ${current} → ${desired} tasks`, 'success');
-                    addAlert(`タスク数を ${current} から ${desired} に増加しました`, 'success');
+            const cooldownElapsed = (now - appState.lastScaleTime) > 
+                ((appState.runningTasks < Math.ceil(backlogPerTask / appState.config.targetBacklog)) 
+                    ? appState.config.scaleOutCooldown * 1000 
+                    : appState.config.scaleInCooldown * 1000);
+            
+            if (cooldownElapsed && appState.queueDepth > 0) {
+                const targetBacklogThreshold = appState.config.targetBacklog;
+                const scaleOutThreshold = (targetBacklogThreshold * appState.config.scaleOutThreshold) / 100;
+                const scaleInThreshold = (targetBacklogThreshold * appState.config.scaleInThreshold) / 100;
+                
+                if (backlogPerTask > scaleOutThreshold && appState.runningTasks < appState.config.maxCapacity) {
+                    appState.runningTasks = Math.min(
+                        appState.config.maxCapacity,
+                        appState.runningTasks + 1
+                    );
+                    addEvent('SCALE_OUT', `Scaled out to ${appState.runningTasks} tasks (BacklogPerTask: ${backlogPerTask.toFixed(1)})`);
+                    appState.lastScaleAction = 'SCALE_OUT';
+                    appState.lastScaleTime = now;
+                } else if (backlogPerTask < scaleInThreshold && appState.runningTasks > appState.config.minCapacity) {
+                    appState.runningTasks = Math.max(
+                        appState.config.minCapacity,
+                        appState.runningTasks - 1
+                    );
+                    addEvent('SCALE_IN', `Scaled in to ${appState.runningTasks} tasks (BacklogPerTask: ${backlogPerTask.toFixed(1)})`);
+                    appState.lastScaleAction = 'SCALE_IN';
+                    appState.lastScaleTime = now;
                 }
-            } else if (desired < current) {
-                // スケールイン
-                const timeSinceLastIn = (now - simulationState.lastScaleTime.in) / 1000;
-                if (timeSinceLastIn >= config.scaleInCooldown) {
-                    simulationState.runningTasks = desired;
-                    simulationState.lastScaleTime.in = now;
-                    simulationState.totalScaled++;
-                    addLog(`⬇️ スケールイン: ${current} → ${desired} tasks`, 'info');
-                    addAlert(`タスク数を ${current} から ${desired} に削減しました`, 'info');
-                }
+            } else if (appState.queueDepth === 0 && appState.runningTasks > 0) {
+                // Queue is empty, graceful shutdown
+                appState.runningTasks = 0;
+                addEvent('GRACEFUL_SHUTDOWN', 'Queue empty, all tasks gracefully terminated');
+                appState.lastScaleAction = 'GRACEFUL_SHUTDOWN';
             }
-        }
-
-        // =====================================
-        // メッセージ処理シミュレーション
-        // =====================================
-        function processMessages() {
-            if (simulationState.sqsBacklog <= 0 || simulationState.runningTasks <= 0) {
-                return;
-            }
-
-            const config = getConfig();
-            const msgPerSecond = (simulationState.runningTasks / config.processingTime);
-            const processed = Math.min(simulationState.sqsBacklog, msgPerSecond);
-
-            simulationState.sqsBacklog = Math.max(0, simulationState.sqsBacklog - processed);
-            simulationState.totalProcessed += processed;
-
-            if (processed > 0) {
-                // 遅延計測（キュー深さに比例）
-                const { backlogPerTask } = calculateDesiredTasks();
-                const latency = backlogPerTask * config.processingTime * 1000; // ms
-                simulationState.latencies.push(latency);
-                if (simulationState.latencies.length > 60) {
-                    simulationState.latencies.shift();
-                }
-            }
-        }
-
-        // =====================================
-        // UI 更新
-        // =====================================
-        function updateUI() {
-            const config = getConfig();
-            const { desired, backlogPerTask } = calculateDesiredTasks();
-
-            // メトリクス表示
-            document.getElementById('sqsBacklog').textContent = simulationState.sqsBacklog;
-            document.getElementById('runningTasks').textContent = simulationState.runningTasks;
-            document.getElementById('backlogPerTask').textContent = backlogPerTask;
-
-            // インジケータ
-            const taskUsage = (simulationState.runningTasks / config.maxTasks) * 100;
-            document.getElementById('taskUsageBar').style.width = taskUsage + '%';
-            document.getElementById('taskUsagePercent').textContent = Math.round(taskUsage) + '%';
-
-            const queueCapacity = Math.min(100, (simulationState.sqsBacklog / (config.maxTasks * 100)) * 100);
-            document.getElementById('queueCapacityBar').style.width = queueCapacity + '%';
-            document.getElementById('queueCapacityPercent').textContent = Math.round(queueCapacity) + '%';
-
-            // 統計
-            document.getElementById('totalProcessed').textContent = Math.round(simulationState.totalProcessed);
-            document.getElementById('totalScaled').textContent = simulationState.totalScaled;
-
-            // 平均遅延
-            if (simulationState.latencies.length > 0) {
-                const avgLatency = simulationState.latencies.reduce((a, b) => a + b, 0) / simulationState.latencies.length;
-                document.getElementById('avgLatency').textContent = Math.round(avgLatency) + 'ms';
-            }
-
-            // コスト削減率（最小タスク数が低いほど削減率が高い）
-            const baseCost = config.maxTasks * 100;
-            const currentCost = simulationState.runningTasks * 100;
-            const savings = Math.round(((baseCost - currentCost) / baseCost) * 100);
-            document.getElementById('costSavings').textContent = Math.max(0, savings) + '%';
-
-            // メトリクス履歴
-            simulationState.metricsHistory.push({
+            
+            // Track backlog history
+            const backlogPerTask = appState.runningTasks === 0 
+                ? appState.queueDepth 
+                : appState.queueDepth / appState.runningTasks;
+            
+            appState.backlogHistory.push({
                 time: new Date(),
-                backlog: simulationState.sqsBacklog,
-                tasks: simulationState.runningTasks,
-                backlogPerTask: backlogPerTask
+                backlog: backlogPerTask
             });
-
-            if (simulationState.metricsHistory.length > MAX_HISTORY) {
-                simulationState.metricsHistory.shift();
+            
+            // Keep only last 60 data points
+            if (appState.backlogHistory.length > 60) {
+                appState.backlogHistory.shift();
             }
+        }
 
-            // グラフ更新
+        // Add event to history
+        function addEvent(type, message) {
+            appState.events.unshift({
+                type: type,
+                message: message,
+                timestamp: new Date(),
+                id: Date.now()
+            });
+            
+            // Keep only last 50 events
+            if (appState.events.length > 50) {
+                appState.events.pop();
+            }
+            
+            updateEventLog();
+            
+            // Notification
+            if (appState.settings.enableNotifications) {
+                showNotification(message, type === 'SCALE_OUT' ? 'warning' : type === 'SCALE_IN' ? 'info' : 'success');
+            }
+        }
+
+        // Update all metrics
+        function updateAllMetrics() {
+            // Queue depth
+            const prevQueueDepth = parseInt(document.getElementById('queueDepth').textContent) || 0;
+            const queueChange = appState.queueDepth - prevQueueDepth;
+            const queueChangePercent = prevQueueDepth === 0 ? 0 : ((queueChange / prevQueueDepth) * 100).toFixed(0);
+            
+            document.getElementById('queueDepth').textContent = appState.queueDepth;
+            const changeEl = document.getElementById('queueDepthChange');
+            changeEl.textContent = `${queueChange >= 0 ? '+' : ''}${queueChange} (${queueChangePercent}%)`;
+            changeEl.className = 'metric-change ' + (queueChange >= 0 ? 'positive' : 'negative');
+            
+            // Running tasks
+            document.getElementById('runningTasks').textContent = appState.runningTasks;
+            document.getElementById('runningTasksChange').textContent = `${appState.runningTasks} task${appState.runningTasks !== 1 ? 's' : ''} running`;
+            
+            // Backlog per task
+            const backlogPerTask = appState.runningTasks === 0 
+                ? (appState.queueDepth > 0 ? appState.queueDepth : 0)
+                : appState.queueDepth / appState.runningTasks;
+            
+            document.getElementById('backlogPerTask').textContent = backlogPerTask.toFixed(1);
+            
+            // Backlog progress
+            const targetBacklog = appState.config.targetBacklog;
+            const scaleOutThreshold = (targetBacklog * appState.config.scaleOutThreshold) / 100;
+            const progressPercent = Math.min(100, (backlogPerTask / scaleOutThreshold) * 100);
+            document.getElementById('backlogProgress').style.width = progressPercent + '%';
+            document.getElementById('backlogProgress').textContent = Math.round(progressPercent) + '%';
+            
+            // Scaling status
+            let scalingStatus = 'Monitoring';
+            let nextAction = 'Waiting for threshold';
+            
+            if (appState.runningTasks === 0) {
+                scalingStatus = 'Idle';
+                nextAction = 'Awaiting queue activity';
+            } else if (backlogPerTask > scaleOutThreshold) {
+                scalingStatus = '📈 Scaling Up';
+                nextAction = `BacklogPerTask (${backlogPerTask.toFixed(1)}) > Threshold (${scaleOutThreshold.toFixed(1)})`;
+            } else if (backlogPerTask < (targetBacklog * appState.config.scaleInThreshold) / 100) {
+                scalingStatus = '📉 Scaling Down';
+                nextAction = `BacklogPerTask (${backlogPerTask.toFixed(1)}) < Threshold (${((targetBacklog * appState.config.scaleInThreshold) / 100).toFixed(1)})`;
+            } else {
+                scalingStatus = '✅ Optimal';
+                nextAction = 'Load balanced across tasks';
+            }
+            
+            document.getElementById('scalingStatus').textContent = scalingStatus;
+            document.getElementById('nextAction').textContent = nextAction;
+            
+            // Status indicator
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            
+            if (backlogPerTask > scaleOutThreshold * 1.2) {
+                statusDot.className = 'status-dot critical';
+                statusText.textContent = 'Critical';
+            } else if (backlogPerTask > scaleOutThreshold) {
+                statusDot.className = 'status-dot warning';
+                statusText.textContent = 'Warning';
+            } else {
+                statusDot.className = 'status-dot healthy';
+                statusText.textContent = 'Healthy';
+            }
+            
+            // Update chart
             updateChart();
+            
+            // Update summary
+            updateSummary();
         }
 
-        // =====================================
-        // グラフ描画（Canvas）
-        // =====================================
+        // Chart management
+        let backlogChart;
+
+        function initializeChart() {
+            const ctx = document.getElementById('backlogChart').getContext('2d');
+            backlogChart = new ChartSimple(ctx, 'line');
+        }
+
         function updateChart() {
-            const canvas = document.getElementById('metricsChart');
+            const labels = appState.backlogHistory.map((_, i) => {
+                const idx = i - appState.backlogHistory.length + 1;
+                return idx % 10 === 0 ? Math.abs(idx) + ' min ago' : '';
+            });
+            
+            const data = appState.backlogHistory.map(h => h.backlog);
+            
+            const targetBacklog = appState.config.targetBacklog;
+            const scaleOutThreshold = (targetBacklog * appState.config.scaleOutThreshold) / 100;
+            
+            // Simple chart update
+            const canvas = document.getElementById('backlogChart');
             const ctx = canvas.getContext('2d');
-            const rect = canvas.getBoundingClientRect();
-            const width = rect.width;
-            const height = rect.height;
-
-            // Canvas サイズを DPR に合わせる
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = width * dpr;
-            canvas.height = height * dpr;
-            ctx.scale(dpr, dpr);
-
-            ctx.clearRect(0, 0, width, height);
-
-            if (simulationState.metricsHistory.length < 2) {
-                ctx.fillStyle = '#ccc';
-                ctx.font = '14px sans-serif';
-                ctx.textAlign = 'center';
-                ctx.fillText('データを収集中...', width / 2, height / 2);
-                return;
-            }
-
-            const history = simulationState.metricsHistory;
-            const maxBacklog = Math.max(...history.map(h => h.backlog), 1);
-            const maxTasks = Math.max(...history.map(h => h.tasks), 1);
-
-            const padding = 40;
-            const graphWidth = width - padding * 2;
-            const graphHeight = height - padding * 2;
-
-            // グリッドラインと軸ラベル
-            ctx.strokeStyle = '#ddd';
+            
+            // Clear
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#e0e0e0';
             ctx.lineWidth = 1;
-            ctx.fillStyle = '#999';
-            ctx.font = '11px sans-serif';
-
             for (let i = 0; i <= 5; i++) {
-                const y = padding + (graphHeight / 5) * i;
+                const y = (canvas.height / 5) * i;
                 ctx.beginPath();
-                ctx.moveTo(padding, y);
-                ctx.lineTo(width - padding, y);
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
                 ctx.stroke();
-                const val = Math.round(maxBacklog - (maxBacklog / 5) * i);
-                ctx.textAlign = 'right';
-                ctx.fillText(val, padding - 10, y + 3);
             }
-
-            // SQS滞留数（青）
-            ctx.strokeStyle = '#4facfe';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            history.forEach((point, idx) => {
-                const x = padding + (graphWidth / (history.length - 1)) * idx;
-                const y = padding + graphHeight - (point.backlog / maxBacklog) * graphHeight;
-                if (idx === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            });
-            ctx.stroke();
-
-            // 実行タスク数（紫、右スケール）
-            ctx.strokeStyle = '#667eea';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            history.forEach((point, idx) => {
-                const x = padding + (graphWidth / (history.length - 1)) * idx;
-                const y = padding + graphHeight - (point.tasks / maxTasks) * graphHeight;
-                if (idx === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            });
-            ctx.stroke();
-
-            // Backlog per Task（赤）
-            ctx.strokeStyle = '#f5576c';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            const maxBacklogPerTask = Math.max(...history.map(h => h.backlogPerTask), 1);
-            history.forEach((point, idx) => {
-                const x = padding + (graphWidth / (history.length - 1)) * idx;
-                const y = padding + graphHeight - (point.backlogPerTask / maxBacklogPerTask) * graphHeight;
-                if (idx === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
-            });
-            ctx.stroke();
-
-            // 凡例
-            ctx.font = 'bold 12px sans-serif';
-            ctx.textAlign = 'left';
-            let legendY = 15;
-            ctx.fillStyle = '#4facfe';
-            ctx.fillRect(10, legendY, 12, 12);
-            ctx.fillStyle = '#333';
-            ctx.fillText('SQS滞留数', 28, legendY + 10);
-
-            legendY += 20;
-            ctx.fillStyle = '#667eea';
-            ctx.fillRect(10, legendY, 12, 12);
-            ctx.fillStyle = '#333';
-            ctx.fillText('実行タスク数', 28, legendY + 10);
-
-            legendY += 20;
-            ctx.fillStyle = '#f5576c';
-            ctx.fillRect(10, legendY, 12, 12);
-            ctx.fillStyle = '#333';
-            ctx.fillText('Backlog/Task', 28, legendY + 10);
+            
+            // Draw threshold line
+            if (scaleOutThreshold > 0) {
+                const maxValue = Math.max(...data, scaleOutThreshold * 1.2);
+                const thresholdY = canvas.height - (scaleOutThreshold / maxValue) * canvas.height;
+                ctx.strokeStyle = '#dc3545';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(0, thresholdY);
+                ctx.lineTo(canvas.width, thresholdY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                // Label
+                ctx.fillStyle = '#dc3545';
+                ctx.font = 'bold 12px Arial';
+                ctx.fillText('Scale-Out Threshold: ' + scaleOutThreshold.toFixed(0), 10, thresholdY - 8);
+            }
+            
+            // Draw line
+            if (data.length > 0) {
+                const maxValue = Math.max(...data, scaleOutThreshold * 1.2);
+                ctx.strokeStyle = '#667eea';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                
+                data.forEach((value, i) => {
+                    const x = (canvas.width / (data.length - 1 || 1)) * i;
+                    const y = canvas.height - (value / maxValue) * canvas.height;
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+                
+                ctx.stroke();
+                
+                // Draw points
+                ctx.fillStyle = '#667eea';
+                data.forEach((value, i) => {
+                    const x = (canvas.width / (data.length - 1 || 1)) * i;
+                    const y = canvas.height - (value / maxValue) * canvas.height;
+                    ctx.beginPath();
+                    ctx.arc(x, y, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                });
+            }
         }
 
-        // =====================================
-        // シミュレーション ループ
-        // =====================================
-        function simulationTick() {
-            if (!simulationState.isRunning) {
+        // Simple chart fallback
+        class ChartSimple {
+            constructor(ctx, type) {
+                this.ctx = ctx;
+                this.type = type;
+            }
+        }
+
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(el => {
+                el.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(el => {
+                el.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Update event log
+        function updateEventLog() {
+            const eventLog = document.getElementById('eventLog');
+            
+            if (appState.events.length === 0) {
+                eventLog.innerHTML = '<div style="color: #999; text-align: center; padding: 30px;">No events yet. Scaling events will appear here.</div>';
                 return;
             }
-
-            processMessages();
-            tryAutoScale();
-            updateUI();
-
-            // 警告チェック
-            const { backlogPerTask } = calculateDesiredTasks();
-            const config = getConfig();
-            if (backlogPerTask > config.targetBacklog * 1.5) {
-                addAlert(`⚠️ Backlog per Task が高い: ${backlogPerTask}件/task (ターゲット: ${config.targetBacklog})`, 'warning');
-            }
-            if (simulationState.runningTasks === config.maxTasks && simulationState.sqsBacklog > 0) {
-                addAlert(`⚠️ 最大タスク数に達しました。キュー滞留あり: ${simulationState.sqsBacklog}件`, 'error');
-            }
-
-            setTimeout(simulationTick, 1000);
+            
+            eventLog.innerHTML = appState.events.map(event => `
+                <div class="event-item ${event.type === 'SCALE_OUT' ? 'scale-out' : event.type === 'SCALE_IN' ? 'scale-in' : ''}">
+                    <div class="event-time">${event.timestamp.toLocaleTimeString()}</div>
+                    <div class="event-message">${getEventIcon(event.type)} ${event.type}</div>
+                    <div class="event-detail">${event.message}</div>
+                </div>
+            `).join('');
         }
 
-        // =====================================
-        // シナリオ実行
-        // =====================================
-        function runScenario(scenario) {
-            const config = getConfig();
-            simulationState.isRunning = true;
-
-            addLog(`🎬 シナリオ開始: ${scenario}`, 'info');
-
-            switch (scenario) {
-                case 'normal':
-                    // 通常流：30秒間、毎秒5～10件
-                    for (let i = 0; i < 30; i++) {
-                        setTimeout(() => {
-                            const msgs = Math.floor(Math.random() * 6) + 5;
-                            simulationState.sqsBacklog += msgs;
-                        }, i * 1000);
-                    }
-                    break;
-
-                case 'spike':
-                    // スパイク：一気に200件投入 → 処理
-                    simulationState.sqsBacklog += 200;
-                    addLog(`📈 スパイク: 200件投入`, 'warning');
-                    break;
-
-                case 'gradual':
-                    // 段階的：0→50→100→150→0
-                    const stages = [0, 50, 100, 150, 0];
-                    let stage = 0;
-                    const interval = setInterval(() => {
-                        if (stage >= stages.length || !simulationState.isRunning) {
-                            clearInterval(interval);
-                            return;
-                        }
-                        simulationState.sqsBacklog = stages[stage];
-                        addLog(`段階 ${stage + 1}: ${stages[stage]}件`, 'info');
-                        stage++;
-                    }, 5000);
-                    break;
-            }
-
-            simulationTick();
-        }
-
-        function addMessages(count) {
-            simulationState.sqsBacklog += count;
-            simulationState.isRunning = true;
-            addLog(`➕ ${count}件追加`, 'info');
-            simulationTick();
-        }
-
-        function stopSimulation() {
-            simulationState.isRunning = false;
-            addLog(`⏹ シミュレーション停止`, 'warning');
-        }
-
-        function reset() {
-            simulationState = {
-                sqsBacklog: 0,
-                runningTasks: 0,
-                totalProcessed: 0,
-                totalScaled: 0,
-                lastScaleTime: { out: 0, in: 0 },
-                isRunning: false,
-                simulationStart: Date.now(),
-                metricsHistory: [],
-                alerts: [],
-                latencies: []
-            };
-            document.getElementById('statusLog').innerHTML = '';
-            document.getElementById('alertContainer').innerHTML = '';
-            updateUI();
-            addLog('🔄 リセット完了', 'success');
-        }
-
-        // =====================================
-        // タブ切替
-        // =====================================
-        function switchTab(tabName) {
-            // ボタン切替
-            document.querySelectorAll('.tab-button').forEach(btn => {
-                btn.classList.remove('active');
-            });
-            event.target.classList.add('active');
-
-            // コンテンツ切替
-            document.querySelectorAll('.tab-content').forEach(content => {
-                content.classList.remove('active');
-            });
-            document.getElementById(tabName).classList.add('active');
-
-            // コード生成
-            if (tabName === 'cdk') {
-                generateCdkCode();
-            } else if (tabName === 'terraform') {
-                generateTerraformCode();
-            } else if (tabName === 'ecs-task') {
-                generateEcsTaskCode();
-            } else if (tabName === 'export') {
-                generateCfnExport();
+        function getEventIcon(type) {
+            switch(type) {
+                case 'SCALE_OUT': return '📈';
+                case 'SCALE_IN': return '📉';
+                case 'GRACEFUL_SHUTDOWN': return '🛑';
+                default: return '📋';
             }
         }
 
-        // =====================================
-        // コード生成関数
-        // =====================================
-        function generateCdkCode() {
-            const config = getConfig();
-            const code = `<span class="comment">// cdk/lib/scaling-stack.ts</span>
-<span class="keyword">import</span> * <span class="keyword">as</span> cdk <span class="keyword">from</span> <span class="string">'aws-cdk-lib'</span>;
-<span class="keyword">import</span> * <span class="keyword">as</span> ecs <span class="keyword">from</span> <span class="string">'aws-cdk-lib/aws-ecs'</span>;
-<span class="keyword">import</span> * <span class="keyword">as</span> autoscaling <span class="keyword">from</span> <span class="string">'aws-cdk-lib/aws-applicationautoscaling'</span>;
-<span class="keyword">import</span> * <span class="keyword">as</span> cloudwatch <span class="keyword">from</span> <span class="string">'aws-cdk-lib/aws-cloudwatch'</span>;
-
-<span class="keyword">export</span> <span class="keyword">class</span> ScalingStack <span class="keyword">extends</span> cdk.Stack {
-  <span class="keyword">constructor</span>(scope: cdk.App, id: <span class="keyword">string</span>, props?: cdk.StackProps) {
-    <span class="keyword">super</span>(scope, id, props);
-
-    <span class="comment">// Application Auto Scaling ターゲット</span>
-    <span class="keyword">const</span> scalingTarget = <span class="keyword">new</span> autoscaling.ScalableTarget(
-      <span class="keyword">this</span>,
-      <span class="string">'ECSServiceScalingTarget'</span>,
-      {
-        serviceNamespace: autoscaling.ServiceNamespace.ECS,
-        resourceId: <span class="string">'service/fargate-cluster/batch-worker'</span>,
-        scalableDimension: <span class="string">'ecs:service:DesiredCount'</span>,
-        minCapacity: <span class="number">${config.minTasks}</span>,
-        maxCapacity: <span class="number">${config.maxTasks}</span>
-      }
-    );
-
-    <span class="comment">// Metric Math: Backlog per Task</span>
-    <span class="keyword">const</span> backlogPerTaskMetric = <span class="keyword">new</span> cloudwatch.Metric({
-      namespace: <span class="string">'AWS/SQS'</span>,
-      metricName: <span class="string">'BacklogPerTask'</span>,
-      period: cdk.Duration.minutes(<span class="number">1</span>),
-      statistic: <span class="string">'Average'</span>
-    });
-
-    <span class="comment">// Target Tracking Scaling Policy</span>
-    scalingTarget.scaleToTrackMetric(
-      <span class="string">'BacklogPerTaskScaling'</span>,
-      {
-        targetValue: <span class="number">${config.targetBacklog}</span>,
-        predefinedMetric: undefined,
-        customMetric: backlogPerTaskMetric,
-        scaleOutCooldown: cdk.Duration.seconds(<span class="number">${config.scaleOutCooldown}</span>),
-        scaleInCooldown: cdk.Duration.seconds(<span class="number">${config.scaleInCooldown}</span>)
-      }
-    );
-
-    <span class="comment">// CloudWatch ダッシュボード</span>
-    <span class="keyword">new</span> cloudwatch.Dashboard(<span class="keyword">this</span>, <span class="string">'BacklogAutoScalingDashboard'</span>, {
-      dashboardName: <span class="string">'backlog-autoscaling'</span>
-    }).addWidgets(
-      <span class="keyword">new</span> cloudwatch.GraphWidget({
-        title: <span class="string">'SQS Backlog &amp; Task Count'</span>,
-        left: [
-          <span class="keyword">new</span> cloudwatch.Metric({
-            namespace: <span class="string">'AWS/SQS'</span>,
-            metricName: <span class="string">'ApproximateNumberOfMessagesVisible'</span>,
-            period: cdk.Duration.seconds(<span class="number">60</span>)
-          })
-        ],
-        right: [
-          <span class="keyword">new</span> cloudwatch.Metric({
-            namespace: <span class="string">'AWS/ECS'</span>,
-            metricName: <span class="string">'RunningTaskCount'</span>,
-            period: cdk.Duration.seconds(<span class="number">60</span>)
-          })
-        ]
-      })
-    );
-  }
-}`;
-
-            document.getElementById('cdkCode').innerHTML = code;
+        // Simulator
+        function runSimulation() {
+            const queueDepth = parseInt(document.getElementById('simQueueDepth').value) || 0;
+            const tasks = parseInt(document.getElementById('simTasks').value) || 1;
+            
+            const backlogPerTask = tasks === 0 ? queueDepth : queueDepth / tasks;
+            
+            const targetBacklog = appState.config.targetBacklog;
+            const scaleOutThreshold = (targetBacklog * appState.config.scaleOutThreshold) / 100;
+            const scaleInThreshold = (targetBacklog * appState.config.scaleInThreshold) / 100;
+            
+            let action = '✅ No action - Load is balanced';
+            let nextTasks = tasks;
+            
+            if (backlogPerTask > scaleOutThreshold) {
+                action = '📈 SCALE OUT recommended';
+                nextTasks = Math.min(appState.config.maxCapacity, tasks + 1);
+            } else if (backlogPerTask < scaleInThreshold && tasks > appState.config.minCapacity) {
+                action = '📉 SCALE IN recommended';
+                nextTasks = Math.max(appState.config.minCapacity, tasks - 1);
+            }
+            
+            document.getElementById('simBacklog').textContent = backlogPerTask.toFixed(2);
+            document.getElementById('simAction').innerHTML = action;
+            document.getElementById('simTargetTasks').textContent = nextTasks;
+            
+            document.getElementById('simResult').style.display = 'block';
         }
 
-        function generateTerraformCode() {
-            const config = getConfig();
-            const code = `<span class="comment"># terraform/ssm.tf - パラメータストア連携</span>
-
-resource <span class="string">"aws_ssm_parameter"</span> <span class="string">"scaling_config"</span> {
-  name  = <span class="string">"/backlog-scaling/config"</span>
-  type  = <span class="string">"String"</span>
-  value = jsonencode({
-    target_backlog      = <span class="number">${config.targetBacklog}</span>
-    min_tasks           = <span class="number">${config.minTasks}</span>
-    max_tasks           = <span class="number">${config.maxTasks}</span>
-    scale_out_cooldown  = <span class="number">${config.scaleOutCooldown}</span>
-    scale_in_cooldown   = <span class="number">${config.scaleInCooldown}</span>
-    processing_time_sec = <span class="number">${config.processingTime}</span>
-  })
-}
-
-<span class="comment"># CDK stack で参照</span>
-data <span class="string">"aws_ssm_parameter"</span> <span class="string">"scaling_config"</span> {
-  name = aws_ssm_parameter.scaling_config.name
-}
-
-output <span class="string">"scaling_config"</span> {
-  value = data.aws_ssm_parameter.scaling_config.value
-}`;
-
-            document.getElementById('terraformCode').innerHTML = code;
+        // Update threshold display
+        function updateThresholdDisplay(inputId, displayId) {
+            document.getElementById(displayId).textContent = document.getElementById(inputId).value + '%';
         }
 
-        function generateEcsTaskCode() {
-            const code = `<span class="comment">// ecs-worker/index.js - Node.js ワーカー実装</span>
-
-<span class="keyword">const</span> AWS = <span class="keyword">require</span>(<span class="string">'aws-sdk'</span>);
-<span class="keyword">const</span> sqs = <span class="keyword">new</span> AWS.SQS();
-
-<span class="keyword">const</span> QUEUE_URL = process.env.SQS_QUEUE_URL;
-<span class="keyword">const</span> VISIBILITY_TIMEOUT = <span class="number">300</span>; <span class="comment">// 5分</span>
-<span class="keyword">let</span> isShuttingDown = <span class="keyword">false</span>;
-<span class="keyword">let</span> activeMessage = <span class="keyword">null</span>;
-
-<span class="comment">// SIGTERM ハンドリング（グレースフルシャットダウン）</span>
-process.on(<span class="string">'SIGTERM'</span>, <span class="keyword">async</span> () => {
-  console.log(<span class="string">'📴 SIGTERM 受信 - グレースフルシャットダウン開始'</span>);
-  isShuttingDown = <span class="keyword">true</span>;
-
-  <span class="comment">// 現在処理中のメッセージ完了待機（最長30秒）</span>
-  <span class="keyword">const</span> startTime = Date.now();
-  <span class="keyword">while</span> (activeMessage &amp;&amp; Date.now() - startTime &lt; <span class="number">30000</span>) {
-    <span class="keyword">await</span> <span class="keyword">new</span> Promise(resolve =&gt; setTimeout(resolve, <span class="number">100</span>));
-  }
-
-  console.log(<span class="string">'✅ シャットダウン完了'</span>);
-  process.exit(<span class="number">0</span>);
-});
-
-<span class="comment">// メッセージ受信・処理ループ</span>
-<span class="keyword">async</span> <span class="keyword">function</span> pollMessages() {
-  <span class="keyword">while</span> (!isShuttingDown) {
-    <span class="keyword">try</span> {
-      <span class="keyword">const</span> params = {
-        QueueUrl: QUEUE_URL,
-        MaxNumberOfMessages: <span class="number">10</span>,
-        VisibilityTimeout: VISIBILITY_TIMEOUT,
-        WaitTimeSeconds: <span class="number">20</span> <span class="comment">// Long Polling</span>
-      };
-
-      <span class="keyword">const</span> data = <span class="keyword">await</span> sqs.receiveMessage(params).promise();
-      <span class="keyword">if</span> (!data.Messages) {
-        <span class="keyword">continue</span>;
-      }
-
-      <span class="keyword">for</span> (<span class="keyword">const</span> message <span class="keyword">of</span> data.Messages) {
-        activeMessage = message;
-        <span class="keyword">try</span> {
-          <span class="comment">// メッセージ処理</span>
-          <span class="keyword">const</span> body = JSON.parse(message.Body);
-          <span class="keyword">await</span> processMessage(body);
-
-          <span class="comment">// 成功時に削除</span>
-          <span class="keyword">await</span> sqs.deleteMessage({
-            QueueUrl: QUEUE_URL,
-            ReceiptHandle: message.ReceiptHandle
-          }).promise();
-
-          console.log(<span class="string">'✅ メッセージ処理完了'</span>);
-        } <span class="keyword">catch</span> (err) {
-          console.error(<span class="string">'❌ 処理エラー'</span>, err);
-          <span class="comment">// エラー時は DLQ へ移動（設定済みなら自動）</span>
-        } <span class="keyword">finally</span> {
-          activeMessage = <span class="keyword">null</span>;
-        }
-      }
-    } <span class="keyword">catch</span> (err) {
-      console.error(<span class="string">'⚠️ ポーリングエラー'</span>, err);
-      <span class="keyword">await</span> <span class="keyword">new</span> Promise(resolve =&gt; setTimeout(resolve, <span class="number">1000</span>));
-    }
-  }
-}
-
-<span class="keyword">async</span> <span class="keyword">function</span> processMessage(body) {
-  <span class="comment">// 実装例: バッチ処理、API呼び出し等</span>
-  console.log(<span class="string">'🔄 処理中:'</span>, body);
-  <span class="keyword">await</span> <span class="keyword">new</span> Promise(r =&gt; setTimeout(r, <span class="number">2000</span>));
-}
-
-<span class="comment">// 起動</span>
-console.log(<span class="string">'🚀 ワーカー起動'</span>);
-pollMessages().catch(console.error);`;
-
-            document.getElementById('ecsTaskCode').innerHTML = code;
+        // Update summary
+        function updateSummary() {
+            document.getElementById('summaryMinCapacity').textContent = appState.config.minCapacity;
+            document.getElementById('summaryMaxCapacity').textContent = appState.config.maxCapacity;
+            document.getElementById('summaryTargetBacklog').textContent = appState.config.targetBacklog;
+            document.getElementById('summaryScaleOutCooldown').textContent = appState.config.scaleOutCooldown + 's';
+            document.getElementById('summaryScaleInCooldown').textContent = appState.config.scaleInCooldown + 's';
         }
 
-        function generateCfnExport() {
-            const config = getConfig();
-            const cfnTemplate = {
-                AWSTemplateFormatVersion: '2010-09-09',
-                Description: 'SQS Backlog-based Auto Scaling for ECS Fargate',
-                Parameters: {
-                    TargetBacklog: {
-                        Type: 'Number',
-                        Default: config.targetBacklog,
-                        Description: 'Target backlog per task'
-                    },
-                    MinTasks: {
-                        Type: 'Number',
-                        Default: config.minTasks,
-                        Description: 'Minimum number of tasks'
-                    },
-                    MaxTasks: {
-                        Type: 'Number',
-                        Default: config.maxTasks,
-                        Description: 'Maximum number of tasks'
-                    }
+        // Refresh metrics
+        function refreshMetrics() {
+            generateMockData();
+            updateAllMetrics();
+            showNotification('Metrics refreshed', 'success');
+        }
+
+        // Export data
+        function exportData() {
+            const exportData = {
+                timestamp: new Date().toISOString(),
+                currentMetrics: {
+                    queueDepth: appState.queueDepth,
+                    runningTasks: appState.runningTasks,
+                    backlogPerTask: appState.runningTasks === 0 ? appState.queueDepth : appState.queueDepth / appState.runningTasks
                 },
-                Resources: {
-                    ScalingTarget: {
-                        Type: 'AWS::ApplicationAutoScaling::ScalableTarget',
-                        Properties: {
-                            MaxCapacity: { Ref: 'MaxTasks' },
-                            MinCapacity: { Ref: 'MinTasks' },
-                            ResourceId: 'service/fargate-cluster/batch-worker',
-                            RoleARN: 'arn:aws:iam::ACCOUNT_ID:role/ecsAutoscalingRole',
-                            ScalableDimension: 'ecs:service:DesiredCount',
-                            ServiceNamespace: 'ecs'
-                        }
-                    },
-                    ScalingPolicy: {
-                        Type: 'AWS::ApplicationAutoScaling::ScalingPolicy',
-                        Properties: {
-                            PolicyName: 'BacklogPerTaskScaling',
-                            PolicyType: 'TargetTrackingScaling',
-                            ScalingTargetId: { Ref: 'ScalingTarget' },
-                            TargetTrackingScalingPolicyConfiguration: {
-                                TargetValue: { Ref: 'TargetBacklog' },
-                                PredefinedMetricSpecification: {
-                                    PredefinedMetricType: 'ALBRequestCountPerTarget'
-                                },
-                                ScaleOutCooldown: 60,
-                                ScaleInCooldown: 300
-                            }
-                        }
-                    }
-                },
-                Outputs: {
-                    ScalingTargetId: {
-                        Value: { Ref: 'ScalingTarget' }
-                    }
-                }
+                configuration: appState.config,
+                events: appState.events
             };
-
-            const code = `<span class="comment">// CloudFormation Template JSON</span>
-${JSON.stringify(cfnTemplate, null, 2).replace(/"/g, '<span class="string">"</span>').replace(/:/g, '<span class="keyword">:</span>')}`;
-
-            document.getElementById('cfnExportCode').innerHTML = code;
-        }
-
-        // =====================================
-        // コピー機能
-        // =====================================
-        function copyCdkCode() {
-            copyToClipboard(stripHtml(document.getElementById('cdkCode').innerHTML));
-        }
-
-        function copyTerraformCode() {
-            copyToClipboard(stripHtml(document.getElementById('terraformCode').innerHTML));
-        }
-
-        function copyEcsTaskCode() {
-            copyToClipboard(stripHtml(document.getElementById('ecsTaskCode').innerHTML));
-        }
-
-        function copyCfnCode() {
-            copyToClipboard(stripHtml(document.getElementById('cfnExportCode').innerHTML));
-        }
-
-        function copyToClipboard(text) {
-            navigator.clipboard.writeText(text).then(() => {
-                addAlert('📋 コピーしました', 'success');
-            }).catch(err => {
-                addAlert('❌ コピー失敗', 'error');
-            });
-        }
-
-        function stripHtml(html) {
-            const div = document.createElement('div');
-            div.innerHTML = html;
-            return div.textContent || div.innerText || '';
-        }
-
-        function downloadCfnJson() {
-            const config = getConfig();
-            const cfn = {
-                AWSTemplateFormatVersion: '2010-09-09',
-                Description: 'SQS Backlog AutoScaling Configuration',
-                Parameters: {
-                    TargetBacklog: { Type: 'Number', Default: config.targetBacklog },
-                    MinTasks: { Type: 'Number', Default: config.minTasks },
-                    MaxTasks: { Type: 'Number', Default: config.maxTasks }
-                }
-            };
-
-            const json = JSON.stringify(cfn, null, 2);
+            
+            const json = JSON.stringify(exportData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'backlog-scaling-template.json';
+            a.download = `scaling-metrics-${Date.now()}.json`;
             a.click();
+            URL.revokeObjectURL(url);
+            
+            showNotification('Data exported successfully', 'success');
         }
 
-        // =====================================
-        // ヘルプモーダル
-        // =====================================
-        function showHelp() {
-            document.getElementById('helpModal').classList.add('active');
+        // Notification
+        function showNotification(message, type = 'info') {
+            // Simple notification using browser alert (in production, use toast library)
+            console.log(`[${type.toUpperCase()}] ${message}`);
         }
 
-        function closeHelp() {
-            document.getElementById('helpModal').classList.remove('active');
-        }
-
-        // =====================================
-        // 初期化
-        // =====================================
-        document.getElementById('targetBacklog').addEventListener('input', updateLabels);
-        document.getElementById('minTasks').addEventListener('input', updateLabels);
-        document.getElementById('maxTasks').addEventListener('input', updateLabels);
-        document.getElementById('scaleOutCooldown').addEventListener('input', updateLabels);
-        document.getElementById('scaleInCooldown').addEventListener('input', updateLabels);
-
-        // 初期表示
-        updateLabels();
-        updateUI();
-        generateCdkCode();
-
-        // 定期更新（シミュレーション非実行時）
-        setInterval(() => {
-            if (!simulationState.isRunning) {
-                updateUI();
-            }
-        }, 500);
+        // Start application
+        init();

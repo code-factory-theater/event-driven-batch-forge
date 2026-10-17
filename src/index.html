@@ -3,299 +3,319 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>フェーズ2: SQS Backlog AutoScaling ダッシュボード</title>
+    <title>ECS Fargate Queue-Depth Adaptive Auto Scaling Dashboard</title>
       <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div class="container">
-        <!-- ヘッダー -->
-        <div class="header">
-            <h1>🚀 フェーズ2: SQS Backlog AutoScaling ダッシュボード</h1>
-            <p>SQS滞留メッセージ数とECS実行タスク数から動的にワーカーを自動スケーリング | シミュレータ＆学習教材</p>
-        </div>
-
-        <!-- メインコンテンツ -->
-        <div class="main-grid">
-            <!-- 左側: コントロール + メトリクス -->
+        <!-- Header -->
+        <header>
             <div>
-                <!-- コントロールパネル -->
-                <div class="panel">
-                    <h2>⚙️ スケーリング設定</h2>
-                    <div class="control-panel">
-                        <div class="control-group">
-                            <label>
-                                ターゲット Backlog/Task
-                                <span id="targetLabel">50</span>
-                            </label>
-                            <input type="range" id="targetBacklog" min="10" max="100" value="50" step="5">
-                        </div>
-                        <div class="control-group">
-                            <label>
-                                最小タスク数
-                                <span id="minLabel">0</span>
-                            </label>
-                            <input type="range" id="minTasks" min="0" max="5" value="0" step="1">
-                        </div>
-                        <div class="control-group">
-                            <label>
-                                最大タスク数
-                                <span id="maxLabel">10</span>
-                            </label>
-                            <input type="range" id="maxTasks" min="5" max="20" value="10" step="1">
-                        </div>
-                        <div class="control-group">
-                            <label>
-                                スケールアウト CoolDown (秒)
-                                <span id="scaleOutLabel">60</span>
-                            </label>
-                            <input type="range" id="scaleOutCooldown" min="30" max="180" value="60" step="10">
-                        </div>
-                        <div class="control-group">
-                            <label>
-                                スケールイン CoolDown (秒)
-                                <span id="scaleInLabel">300</span>
-                            </label>
-                            <input type="range" id="scaleInCooldown" min="60" max="600" value="300" step="30">
-                        </div>
-                        <div class="control-group">
-                            <label>処理時間 (秒/msg)</label>
-                            <input type="number" id="processingTime" value="2" min="0.5" max="10" step="0.5">
-                        </div>
-                    </div>
+                <h1>🚀 ECS Fargate Auto Scaling Dashboard</h1>
+                <div class="header-subtitle">Phase 3 - Queue-Depth Adaptive Scaling System</div>
+            </div>
+            <div class="header-controls">
+                <div class="status-indicator">
+                    <div class="status-dot healthy" id="statusDot"></div>
+                    <span id="statusText">Healthy</span>
                 </div>
+                <button class="refresh-btn" onclick="refreshMetrics()">🔄 Refresh</button>
+                <button class="export-btn" onclick="exportData()">📥 Export</button>
+                <button class="settings-btn" onclick="openSettings()">⚙️ Settings</button>
+            </div>
+        </header>
 
-                <!-- メトリクス表示 -->
-                <div class="panel" style="margin-top: 20px;">
-                    <h2>📊 リアルタイムメトリクス</h2>
-                    <div class="metrics-grid">
-                        <div class="metric-box">
-                            <div class="label">SQS 滞留メッセージ</div>
-                            <div class="value" id="sqsBacklog">0</div>
-                            <div class="unit">件</div>
-                        </div>
-                        <div class="metric-box success">
-                            <div class="label">実行中タスク数</div>
-                            <div class="value" id="runningTasks">0</div>
-                            <div class="unit">tasks</div>
-                        </div>
-                        <div class="metric-box warning">
-                            <div class="label">Backlog per Task</div>
-                            <div class="value" id="backlogPerTask">0</div>
-                            <div class="unit">件/task</div>
-                        </div>
-                    </div>
+        <!-- Key Metrics Grid -->
+        <div class="grid">
+            <div class="card">
+                <div class="card-title">SQS Queue Depth</div>
+                <div class="metric-value" id="queueDepth">0</div>
+                <div class="metric-unit">messages visible</div>
+                <div class="metric-change positive" id="queueDepthChange">+0 (0%)</div>
+            </div>
 
-                    <!-- スケーリングインジケータ -->
-                    <div style="margin-top: 20px;">
-                        <div class="scaling-indicator">
-                            <div class="label">タスク使用率:</div>
-                            <div class="bar">
-                                <div class="fill" id="taskUsageBar" style="width: 0%"></div>
-                            </div>
-                            <span id="taskUsagePercent">0%</span>
-                        </div>
-                        <div class="scaling-indicator">
-                            <div class="label">キュー容量:</div>
-                            <div class="bar">
-                                <div class="fill" id="queueCapacityBar" style="width: 0%"></div>
-                            </div>
-                            <span id="queueCapacityPercent">0%</span>
-                        </div>
-                    </div>
+            <div class="card">
+                <div class="card-title">ECS Running Tasks</div>
+                <div class="metric-value" id="runningTasks">0</div>
+                <div class="metric-unit">tasks active</div>
+                <div class="metric-change positive" id="runningTasksChange">0 tasks</div>
+            </div>
 
-                    <!-- アラート -->
-                    <div id="alertContainer" style="margin-top: 15px;"></div>
+            <div class="card">
+                <div class="card-title">Backlog Per Task</div>
+                <div class="metric-value" id="backlogPerTask">0.0</div>
+                <div class="metric-unit">avg messages/task</div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="backlogProgress" style="width: 0%;">0%</div>
                 </div>
             </div>
 
-            <!-- 右側: シミュレーションコントロール + ログ -->
-            <div>
-                <!-- シミュレーションコントロール -->
-                <div class="panel">
-                    <h2>🎮 シミュレーション</h2>
+            <div class="card">
+                <div class="card-title">Scaling Status</div>
+                <div class="metric-value" id="scalingStatus">—</div>
+                <div class="metric-unit">current state</div>
+                <div class="metric-change positive" id="nextAction">Monitoring...</div>
+            </div>
+        </div>
 
-                    <div style="margin-bottom: 15px;">
-                        <h3 style="font-size: 14px; color: #667eea; margin-bottom: 10px;">シナリオ実行</h3>
-                        <div class="button-group">
-                            <button class="primary" onclick="runScenario('normal')">通常流</button>
-                            <button class="primary" onclick="runScenario('spike')">スパイク</button>
-                            <button class="primary" onclick="runScenario('gradual')">段階的負荷</button>
-                        </div>
+        <!-- Backlog Per Task Chart -->
+        <div class="chart-container">
+            <div class="chart-title">📊 Backlog Per Task Trend (Last 1 Hour)</div>
+            <canvas id="backlogChart"></canvas>
+        </div>
+
+        <!-- Tabs Section -->
+        <div class="chart-container">
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('simulator')">Simulator</button>
+                <button class="tab" onclick="switchTab('history')">Scaling History</button>
+                <button class="tab" onclick="switchTab('config')">Configuration</button>
+                <button class="tab" onclick="switchTab('health')">Health Check</button>
+            </div>
+
+            <!-- Simulator Tab -->
+            <div id="simulator" class="tab-content active">
+                <h3 style="color: #667eea; margin-bottom: 20px;">🎮 Scaling Behavior Simulator</h3>
+                <p style="color: #666; margin-bottom: 20px; font-size: 14px;">
+                    Test how the scaling system will respond to different queue depths and task counts.
+                </p>
+                
+                <div class="simulator-inputs">
+                    <div class="form-group">
+                        <label>Queue Depth (messages)</label>
+                        <input type="number" id="simQueueDepth" value="500" min="0" max="10000" step="50">
                     </div>
-
-                    <div style="margin-bottom: 15px;">
-                        <h3 style="font-size: 14px; color: #667eea; margin-bottom: 10px;">手動操作</h3>
-                        <div class="button-group">
-                            <button class="secondary" onclick="addMessages(10)">+10 msg</button>
-                            <button class="secondary" onclick="addMessages(50)">+50 msg</button>
-                            <button class="secondary" onclick="addMessages(100)">+100 msg</button>
-                        </div>
-                        <div class="button-group">
-                            <button class="danger" onclick="stopSimulation()">⏹ 停止</button>
-                            <button class="secondary" onclick="reset()">🔄 リセット</button>
-                            <button class="secondary" onclick="showHelp()">❓ ヘルプ</button>
-                        </div>
-                    </div>
-
-                    <div>
-                        <h3 style="font-size: 14px; color: #667eea; margin-bottom: 10px;">統計</h3>
-                        <div class="stats-grid">
-                            <div class="stat-card">
-                                <div class="stat-value" id="totalProcessed">0</div>
-                                <div class="stat-label">処理済み</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value" id="totalScaled">0</div>
-                                <div class="stat-label">スケール回数</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value" id="avgLatency">0ms</div>
-                                <div class="stat-label">平均遅延</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value" id="costSavings">0%</div>
-                                <div class="stat-label">コスト削減率</div>
-                            </div>
-                        </div>
+                    <div class="form-group">
+                        <label>Current Tasks</label>
+                        <input type="number" id="simTasks" value="2" min="0" max="10" step="1">
                     </div>
                 </div>
 
-                <!-- ステータスログ -->
-                <div class="panel" style="margin-top: 20px;">
-                    <h2>📋 ステータスログ</h2>
-                    <div class="status-log" id="statusLog"></div>
+                <button class="btn btn-primary" onclick="runSimulation()" style="width: 100%;">▶️ Run Simulation</button>
+
+                <div class="simulator-result" id="simResult" style="display: none;">
+                    <div style="margin-bottom: 15px;">
+                        <strong>Calculated Backlog Per Task:</strong>
+                        <div style="font-size: 24px; color: #667eea; margin-top: 5px;" id="simBacklog">0.0</div>
+                    </div>
+                    <div style="margin-bottom: 15px;">
+                        <strong>Recommended Action:</strong>
+                        <div style="font-size: 16px; margin-top: 5px;" id="simAction">—</div>
+                    </div>
+                    <div>
+                        <strong>Target Task Count:</strong>
+                        <div style="font-size: 20px; color: #764ba2; margin-top: 5px;" id="simTargetTasks">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scaling History Tab -->
+            <div id="history" class="tab-content">
+                <h3 style="color: #667eea; margin-bottom: 20px;">📋 Scaling Event History</h3>
+                <div class="event-log" id="eventLog">
+                    <div style="color: #999; text-align: center; padding: 30px;">No events yet. Scaling events will appear here.</div>
+                </div>
+            </div>
+
+            <!-- Configuration Tab -->
+            <div id="config" class="tab-content">
+                <h3 style="color: #667eea; margin-bottom: 20px;">⚙️ Scaling Configuration</h3>
+                
+                <div class="form-group">
+                    <label>Minimum Capacity (MinCapacity)</label>
+                    <input type="number" id="minCapacity" value="0" min="0" max="10" step="1">
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Minimum number of tasks to always keep running (0 = complete shutdown)</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Maximum Capacity (MaxCapacity)</label>
+                    <input type="number" id="maxCapacity" value="10" min="1" max="20" step="1">
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Maximum number of tasks allowed</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale-Out Cooldown (seconds)</label>
+                    <input type="number" id="scaleOutCooldown" value="60" min="10" max="300" step="10">
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Wait time before next scale-out action</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale-In Cooldown (seconds)</label>
+                    <input type="number" id="scaleInCooldown" value="300" min="30" max="900" step="30">
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Wait time before next scale-in action (allows graceful shutdown)</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Target Backlog Per Task</label>
+                    <input type="number" id="targetBacklog" value="100" min="10" max="500" step="10">
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Desired average messages per task (scaling target)</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale-Out Threshold (% of target)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="range" id="scaleOutThreshold" value="150" min="100" max="300" step="10" onchange="updateThresholdDisplay('scaleOutThreshold', 'scaleOutDisplay')">
+                        <span class="range-value" id="scaleOutDisplay">150%</span>
+                    </div>
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Trigger scale-out when BacklogPerTask exceeds this % of target</div>
+                </div>
+
+                <div class="form-group">
+                    <label>Scale-In Threshold (% of target)</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="range" id="scaleInThreshold" value="30" min="0" max="100" step="10" onchange="updateThresholdDisplay('scaleInThreshold', 'scaleInDisplay')">
+                        <span class="range-value" id="scaleInDisplay">30%</span>
+                    </div>
+                    <div style="font-size: 12px; color: #999; margin-top: 5px;">Trigger scale-in when BacklogPerTask drops below this % of target</div>
+                </div>
+
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="saveConfig()">💾 Save Configuration</button>
+                    <button class="btn btn-secondary" onclick="resetConfig()">🔄 Reset to Defaults</button>
+                </div>
+            </div>
+
+            <!-- Health Check Tab -->
+            <div id="health" class="tab-content">
+                <h3 style="color: #667eea; margin-bottom: 20px;">🏥 System Health Check</h3>
+
+                <div class="health-check">
+                    <div class="health-check-status ok"></div>
+                    <div class="health-check-text">
+                        <strong>CloudWatch Metric Math</strong><br>
+                        BacklogPerTask metric computation
+                    </div>
+                    <div class="health-check-time" id="health1Time">Just now</div>
+                </div>
+
+                <div class="health-check">
+                    <div class="health-check-status ok"></div>
+                    <div class="health-check-text">
+                        <strong>ECS Auto Scaling Group</strong><br>
+                        Auto Scaling policy active
+                    </div>
+                    <div class="health-check-time" id="health2Time">Just now</div>
+                </div>
+
+                <div class="health-check">
+                    <div class="health-check-status pending"></div>
+                    <div class="health-check-text">
+                        <strong>Task Protection (ECS Scale-in Protection)</strong><br>
+                        Graceful shutdown enabled
+                    </div>
+                    <div class="health-check-time" id="health3Time">Monitoring</div>
+                </div>
+
+                <div class="health-check">
+                    <div class="health-check-status ok"></div>
+                    <div class="health-check-text">
+                        <strong>SQS Long Polling</strong><br>
+                        Queue polling timeout: 20s
+                    </div>
+                    <div class="health-check-time" id="health4Time">Active</div>
+                </div>
+
+                <div class="alert alert-info" style="margin-top: 20px;">
+                    <span>ℹ️</span>
+                    <span>All systems operational. Scaling policy is actively monitoring SQS queue depth and adjusting ECS task count accordingly.</span>
                 </div>
             </div>
         </div>
 
-        <!-- メトリクス推移グラフ -->
-        <div class="panel" style="margin-bottom: 20px;">
-            <h2>📈 メトリクス推移グラフ (30秒)</h2>
-            <div class="chart-container">
-                <canvas id="metricsChart"></canvas>
-            </div>
-        </div>
+        <!-- Current Configuration Summary -->
+        <div class="chart-container" style="margin-top: 30px;">
+            <h3 style="color: #667eea; margin-bottom: 20px;">📌 CDK Deployment Summary</h3>
+            <table class="comparison-table">
+                <thead>
+                    <tr>
+                        <th>Parameter</th>
+                        <th>Current Value</th>
+                        <th>AWS CDK Reference</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Min Capacity</strong></td>
+                        <td id="summaryMinCapacity">0</td>
+                        <td><code>minCapacity: 0</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Max Capacity</strong></td>
+                        <td id="summaryMaxCapacity">10</td>
+                        <td><code>maxCapacity: 10</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Target Backlog</strong></td>
+                        <td id="summaryTargetBacklog">100</td>
+                        <td><code>targetValue: 100</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Scale-Out Cooldown</strong></td>
+                        <td id="summaryScaleOutCooldown">60s</td>
+                        <td><code>scaleOutCooldown: Duration.seconds(60)</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Scale-In Cooldown</strong></td>
+                        <td id="summaryScaleInCooldown">300s</td>
+                        <td><code>scaleInCooldown: Duration.seconds(300)</code></td>
+                    </tr>
+                </tbody>
+            </table>
 
-        <!-- タブ: コード＆ドキュメント -->
-        <div class="panel">
-            <div class="tab-container">
-                <button class="tab-button active" onclick="switchTab('cdk')">CDK スタック定義</button>
-                <button class="tab-button" onclick="switchTab('terraform')">Terraform SSM連携</button>
-                <button class="tab-button" onclick="switchTab('ecs-task')">ECS タスク実装</button>
-                <button class="tab-button" onclick="switchTab('metrics')">メトリクス計算式</button>
-                <button class="tab-button" onclick="switchTab('export')">CloudFormation 生成</button>
-            </div>
-
-            <!-- CDK -->
-            <div id="cdk" class="tab-content active">
-                <h2 style="font-size: 16px; margin-bottom: 10px; color: #667eea;">Application Auto Scaling with Metric Math</h2>
-                <div class="code-block" id="cdkCode"></div>
-                <button class="secondary" style="margin-top: 10px; width: 100%;" onclick="copyCdkCode()">📋 コピー</button>
-            </div>
-
-            <!-- Terraform -->
-            <div id="terraform" class="tab-content">
-                <h2 style="font-size: 16px; margin-bottom: 10px; color: #667eea;">SSM Parameter Store 連携</h2>
-                <div class="code-block" id="terraformCode"></div>
-                <button class="secondary" style="margin-top: 10px; width: 100%;" onclick="copyTerraformCode()">📋 コピー</button>
-            </div>
-
-            <!-- ECS Task -->
-            <div id="ecs-task" class="tab-content">
-                <h2 style="font-size: 16px; margin-bottom: 10px; color: #667eea;">ECS Fargate ワーカー実装（Node.js）</h2>
-                <div class="code-block" id="ecsTaskCode"></div>
-                <button class="secondary" style="margin-top: 10px; width: 100%;" onclick="copyEcsTaskCode()">📋 コピー</button>
-            </div>
-
-            <!-- メトリクス計算式 -->
-            <div id="metrics" class="tab-content">
-                <h2 style="font-size: 16px; margin-bottom: 10px; color: #667eea;">スケーリングアルゴリズム</h2>
-                <div class="alert info">
-                    <div class="alert-icon">ℹ️</div>
-                    <div>
-                        <strong>1. Backlog per Task の計算</strong><br>
-                        <code>BacklogPerTask = SQS_VisibleMessages / MAX(RunningTaskCount, 1)</code>
-                    </div>
-                </div>
-                <div class="alert info">
-                    <div class="alert-icon">ℹ️</div>
-                    <div>
-                        <strong>2. 必要タスク数の決定</strong><br>
-                        <code>DesiredTasks = CEIL(SQS_VisibleMessages / TargetBacklog)</code><br>
-                        <code>CLAMPED = MAX(MIN(DesiredTasks, MaxTasks), MinTasks)</code>
-                    </div>
-                </div>
-                <div class="alert success">
-                    <div class="alert-icon">✅</div>
-                    <div>
-                        <strong>3. スケーリング実行</strong><br>
-                        スケールアウト（↑）: CoolDown 60秒（迅速に対応）<br>
-                        スケールイン（↓）: CoolDown 300秒（安全性重視）
-                    </div>
-                </div>
-                <div class="code-block" style="margin-top: 15px;">
-<span class="comment">// 実装例（疑似コード）</span>
-const backlogPerTask = Math.ceil(visibleMessages / Math.max(runningTasks, 1));
-const desiredTasks = Math.ceil(visibleMessages / targetBacklog);
-const newTaskCount = Math.max(minTasks, Math.min(desiredTasks, maxTasks));
-
-if (newTaskCount &gt; runningTasks &amp;&amp; cooldownExpired('scaleOut')) {
-  <span class="keyword">// スケールアウト</span>
-  applyAutoScaling(newTaskCount);
-} else if (newTaskCount &lt; runningTasks &amp;&amp; cooldownExpired('scaleIn')) {
-  <span class="keyword">// スケールイン</span>
-  applyAutoScaling(newTaskCount);
-}
-                </div>
-            </div>
-
-            <!-- Export -->
-            <div id="export" class="tab-content">
-                <h2 style="font-size: 16px; margin-bottom: 10px; color: #667eea;">CloudFormation JSON 生成</h2>
-                <div class="alert warning">
-                    <div class="alert-icon">⚠️</div>
-                    <div>現在の設定値から自動生成します。コピー後、AWS CloudFormation コンソールにペーストしてデプロイしてください。</div>
-                </div>
-                <div class="code-block" id="cfnExportCode"></div>
-                <button class="primary" style="margin-top: 10px; width: 100%;" onclick="copyCfnCode()">📋 コピー</button>
-                <button class="secondary" style="margin-top: 10px; width: 100%;" onclick="downloadCfnJson()">⬇️ JSON ダウンロード</button>
+            <div class="alert alert-success" style="margin-top: 20px;">
+                <span>✅</span>
+                <span>These parameters are ready to be deployed to AWS using AWS CDK. See <code>cdk/lib/scaling-stack.ts</code> for implementation.</span>
             </div>
         </div>
     </div>
 
-    <!-- ヘルプモーダル -->
-    <div id="helpModal" class="modal">
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
         <div class="modal-content">
-            <span class="modal-close" onclick="closeHelp()">×</span>
-            <div class="modal-header">ヘルプ: SQS Backlog AutoScaling の仕組み</div>
-
-            <h3 style="color: #667eea; margin-top: 20px; margin-bottom: 10px;">📌 基本コンセプト</h3>
-            <p style="margin-bottom: 15px;">このダッシュボードは、SQS の滞留メッセージ数と ECS タスク数から「1タスクあたりの平均滞留量（Backlog per Task）」を算出し、AWS Application Auto Scaling により自動的にタスク数を調整する仕組みを可視化・シミュレートします。</p>
-
-            <h3 style="color: #667eea; margin-top: 20px; margin-bottom: 10px;">🎯 主な機能</h3>
-            <ul style="margin-left: 20px; margin-bottom: 15px;">
-                <li><strong>リアルタイムメトリクス:</strong> SQS滞留数、実行タスク数、Backlog/Taskをライブ表示</li>
-                <li><strong>動的スケーリング:</strong> ターゲットBacklog/Taskに基づき、最小～最大タスク数の範囲内で自動調整</li>
-                <li><strong>クールダウン機構:</strong> スケールアウト 60秒（迅速）、スケールイン 300秒（安全）でフラッピング防止</li>
-                <li><strong>複数シナリオ:</strong> 通常流、スパイク、段階的負荷を1クリックで実行</li>
-                <li><strong>コード生成:</strong> CDK/Terraform/CloudFormation コードを自動生成・コピー</li>
-            </ul>
-
-            <h3 style="color: #667eea; margin-top: 20px; margin-bottom: 10px;">⚙️ パラメータ調整ガイド</h3>
-            <div style="background: #f9f9f9; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
-                <p><strong>ターゲット Backlog/Task:</strong> 1タスクが効率的に処理できるメッセージ数。低いほど低遅延（コスト高）、高いほど高スループット（遅延大）。推奨値: 30～70件。</p>
-                <p style="margin-top: 10px;"><strong>最小/最大タスク数:</strong> スケーリングの下限・上限。最小=0でコスト最小化、最小=1で常時稼働。</p>
-                <p style="margin-top: 10px;"><strong>CoolDown時間:</strong> スケール直後の安定化期間。スケールアウトは短め（反応速度重視）、スケールインは長め（安全性重視）。</p>
+            <div class="modal-header">
+                <span>🔧 Advanced Settings</span>
+                <button class="modal-close" onclick="closeSettings()">✕</button>
             </div>
 
-            <h3 style="color: #667eea; margin-top: 20px; margin-bottom: 10px;">💡 期待される効果</h3>
-            <ul style="margin-left: 20px; margin-bottom: 15px;">
-                <li>アイドル時コスト 70% 削減（最小タスク数=0時）</li>
-                <li>バッチ処理 SLA 達成率向上（スパイク時も即座に対応）</li>
-                <li>運用自動化 100%（人手による手動スケール不要）</li>
-            </ul>
+            <div class="form-group">
+                <label>AWS Region</label>
+                <select id="awsRegion">
+                    <option value="ap-northeast-1">Tokyo (ap-northeast-1)</option>
+                    <option value="us-east-1">N. Virginia (us-east-1)</option>
+                    <option value="eu-west-1">Ireland (eu-west-1)</option>
+                </select>
+            </div>
 
-            <button class="primary" style="width: 100%; margin-top: 20px;" onclick="closeHelp()">閉じる</button>
+            <div class="form-group">
+                <label>SQS Queue Name</label>
+                <input type="text" id="sqsQueueName" value="batch-processing-queue" placeholder="Queue name">
+            </div>
+
+            <div class="form-group">
+                <label>ECS Cluster Name</label>
+                <input type="text" id="ecsClusterName" value="fargate-batch-cluster" placeholder="Cluster name">
+            </div>
+
+            <div class="form-group">
+                <label>ECS Service Name</label>
+                <input type="text" id="ecsServiceName" value="batch-processor-service" placeholder="Service name">
+            </div>
+
+            <div class="form-group">
+                <label>Auto-Refresh Interval (seconds)</label>
+                <input type="number" id="refreshInterval" value="10" min="5" max="60" step="5">
+            </div>
+
+            <div class="form-group">
+                <label>Enable Notifications</label>
+                <input type="checkbox" id="enableNotifications" checked style="width: auto; cursor: pointer;">
+                <span style="margin-left: 8px; font-size: 14px;">Alert on scaling events</span>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="saveAdvancedSettings()">Save</button>
+                <button class="btn btn-secondary" onclick="closeSettings()">Cancel</button>
+            </div>
         </div>
     </div>
 
